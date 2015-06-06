@@ -17,6 +17,9 @@ import solvers._
 
 object IntOpti {
   
+  /**
+   * Computes the sign of a list of integer (positive, negative or mixed sign).
+   */
   private def computeBigSign(bigList: List[BigInt]) : Int = {
     val isBigPositive = bigList.filter(_ < 0).isEmpty
     val isBigNegative = bigList.filter(_ >= 0).isEmpty
@@ -28,6 +31,9 @@ object IntOpti {
       0
     }
   }
+  /**
+   * Computes the absolute minimal value of a list of integers.
+   */
   private def computeMinimalValue(list: List[Int]) : Int = computeMinimalValue(list.map(BigInt(_))).intValue()
   private def computeMinimalValue(bigList: List[BigInt]) : BigInt = {
     if (!bigList.isEmpty && bigList.filter(_ < 0).isEmpty) {
@@ -38,16 +44,20 @@ object IntOpti {
       0
     }
   }
-  
+  /**
+   * Get the requirements from the pre-conditions. Only when dealing with positive integers
+   */
   private def getCompExprGr(expr: Expr) : List[(Identifier, BigInt)] = expr match {
     case GreaterThan(Variable(x), IntLiteral(i)) => List((x, BigInt(i+1)))
     case GreaterThan(Variable(x), InfiniteIntegerLiteral(i)) => List((x, i+1))
     case GreaterEquals(Variable(x), IntLiteral(i)) => List((x, BigInt(i)))
     case GreaterEquals(Variable(x), InfiniteIntegerLiteral(i)) => List((x, i+1))
-    case LessThan(Variable(x), IntLiteral(i)) => List((x, BigInt(i-1)))
     case And(exprs) => exprs.toList.flatMap(getCompExprGr(_))
     case _ => Nil
   }
+  /**
+   * Get the requirements from the pre-conditions. Only when dealing with negative integers
+   */
   private def getCompExprLs(expr: Expr) : List[(Identifier, BigInt)] = expr match {
     case LessThan(Variable(x), IntLiteral(i)) => List((x, i-1))
     case LessThan(Variable(x), InfiniteIntegerLiteral(i)) => List((x, i-1))
@@ -56,7 +66,9 @@ object IntOpti {
     case And(exprs) => exprs.toList.flatMap(getCompExprLs(_))
     case _ => Nil
   }
-  
+  /**
+   * Get the requirements, if any, of a function's verification condition, according to the sign of the integers.
+   */
   private def getRequirements(vcCond: Expr, sign: Int) : List[(Identifier,BigInt)] = {
     vcCond match {
       case Implies(lhs, _) => {
@@ -71,6 +83,10 @@ object IntOpti {
       case _ => Nil
     }
   }
+  
+  /**
+   * Update the invalid result with the requirements, such that minimal value subtraction takes requirements into account.
+   */
   private def getUpdatedInt(list: List[(Identifier, Int)], vcCond: Expr) : List[Int] = getUpdatedBig(list.map(x => (x._1, BigInt(x._2))),vcCond).map(_.intValue())
   private def getUpdatedBig(list: List[(Identifier, BigInt)], vcCond: Expr) : List[BigInt] = {
     val sign = computeBigSign(list.map(_._2))
@@ -93,16 +109,34 @@ object IntOpti {
     }
   }
   
+  /**
+   * Compute a new simpler alternative model with minimal value subtraction.
+   */
   def computeNewInvalidRes(invalidRes: Map[Identifier, Expr], vcCond: Expr) : Map[Identifier, Expr] = {
     val invalidResSeq = invalidRes.toList
-    val intInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[IntLiteral]).map(x => (x._1, x._2.asInstanceOf[IntLiteral].value))
-    val intInvalidResVal = intInvalidRes.map(_._2)
-    val bigInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[InfiniteIntegerLiteral]).map(x => (x._1, x._2.asInstanceOf[InfiniteIntegerLiteral].value))
-    val bigInvalidResVal = bigInvalidRes.map(_._2)
-    val intUpdated = getUpdatedInt(intInvalidRes, vcCond)
-    val bigUpdated = getUpdatedBig(bigInvalidRes, vcCond)
-    val intMinimalValue = computeMinimalValue(intUpdated)
-    val bigMinimalValue = computeMinimalValue(bigUpdated)
+    def computeIntMinimalValue() : Int = {
+      val intInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[IntLiteral]).map(x => (x._1, x._2.asInstanceOf[IntLiteral].value))
+      if (intInvalidRes.isEmpty) {
+        0
+      } else {
+        val intInvalidResVal = intInvalidRes.map(_._2)
+        val intUpdated = getUpdatedInt(intInvalidRes, vcCond)
+        computeMinimalValue(intUpdated)
+      }
+    }
+    def computeBigMinimalValue() : BigInt = {
+       val bigInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[InfiniteIntegerLiteral]).map(x => (x._1, x._2.asInstanceOf[InfiniteIntegerLiteral].value))
+       if (bigInvalidRes.isEmpty) {
+         0
+       } else {
+         val bigInvalidResVal = bigInvalidRes.map(_._2)
+         val bigUpdated = getUpdatedBig(bigInvalidRes, vcCond)  
+         computeMinimalValue(bigUpdated)
+       }
+
+    }
+    val intMinimalValue = computeIntMinimalValue()
+    val bigMinimalValue = computeBigMinimalValue()
     invalidRes.map(_ match {
       case (id, v) if v.isInstanceOf[InfiniteIntegerLiteral] => (id, InfiniteIntegerLiteral(v.asInstanceOf[InfiniteIntegerLiteral].value - bigMinimalValue))
       case (id, v) if v.isInstanceOf[IntLiteral] => (id, IntLiteral(v.asInstanceOf[IntLiteral].value - intMinimalValue))
@@ -110,7 +144,7 @@ object IntOpti {
       })
   }
   /**
-   * Computes new invalid results by deducing locally minimal value inside a CaseClass.
+   * Computes new invalid results with local minimal value substraction inside a CaseClass.
    */
   def computeNewObjectInvalidRes(invalidRes: Map[Identifier, Expr]) : Map[Identifier, Expr] = {
     val invalidResSorted = invalidRes.toSeq.sortBy(_._1.name)
@@ -156,5 +190,11 @@ object IntOpti {
   def getNewVcCond(newInvalidRes: Map[Identifier, Expr], oldVcCond: Expr) : Expr = oldVcCond match {
     case Implies(lhs,rhs) => Implies(And(Seq(lhs) ++ newInvalidRes.toSeq.map(x => Equals(Variable(x._1),x._2))),rhs)
     case _ => Implies(And(newInvalidRes.toSeq.map(x => Equals(Variable(x._1),x._2))),oldVcCond)
+  }
+  
+  def getInvalidResultsOptimisation(vcCond: Expr, s: Solver) : (Map[Identifier,Expr],Expr) = {
+    val newIntRes = computeNewInvalidRes(s.getModel,vcCond)
+    val newObjRes = computeNewObjectInvalidRes(newIntRes)
+    (newObjRes, getNewVcCond(newObjRes,vcCond))
   }
 }
