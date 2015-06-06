@@ -20,6 +20,7 @@ object IntOpti {
   /**
    * Computes the sign of a list of integer (positive, negative or mixed sign).
    */
+  private def computeIntSign(list: List[Int]) : Int = computeBigSign(list.map(BigInt(_)))
   private def computeBigSign(bigList: List[BigInt]) : Int = {
     val isBigPositive = bigList.filter(_ < 0).isEmpty
     val isBigNegative = bigList.filter(_ >= 0).isEmpty
@@ -87,9 +88,8 @@ object IntOpti {
   /**
    * Update the invalid result with the requirements, such that minimal value subtraction takes requirements into account.
    */
-  private def getUpdatedInt(list: List[(Identifier, Int)], vcCond: Expr) : List[Int] = getUpdatedBig(list.map(x => (x._1, BigInt(x._2))),vcCond).map(_.intValue())
-  private def getUpdatedBig(list: List[(Identifier, BigInt)], vcCond: Expr) : List[BigInt] = {
-    val sign = computeBigSign(list.map(_._2))
+  private def getUpdatedInt(list: List[(Identifier, Int)], vcCond: Expr, sign: Int) : List[Int] = getUpdatedBig(list.map(x => (x._1, BigInt(x._2))),vcCond,sign).map(_.intValue())
+  private def getUpdatedBig(list: List[(Identifier, BigInt)], vcCond: Expr, sign: Int) : List[BigInt] = {
     if (sign == 0) {
       list.map(_._2)
     } else {
@@ -114,32 +114,61 @@ object IntOpti {
    */
   def computeNewInvalidRes(invalidRes: Map[Identifier, Expr], vcCond: Expr) : Map[Identifier, Expr] = {
     val invalidResSeq = invalidRes.toList
-    def computeIntMinimalValue() : Int = {
+    def computeIntMinimalValue() : (Int, Option[Int]) = {
       val intInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[IntLiteral]).map(x => (x._1, x._2.asInstanceOf[IntLiteral].value))
       if (intInvalidRes.isEmpty) {
-        0
+        (0, None)
       } else {
         val intInvalidResVal = intInvalidRes.map(_._2)
-        val intUpdated = getUpdatedInt(intInvalidRes, vcCond)
-        computeMinimalValue(intUpdated)
+        val sign = computeIntSign(intInvalidResVal)
+        if (sign == 0) {
+          val positiveInvalidRes = intInvalidRes.filter(_._2 >= 0)
+          val positiveUpdated = getUpdatedInt(positiveInvalidRes, vcCond, 1)
+          val negativeInvalidRes = intInvalidRes.filter(_._2 < 0)
+          val negativeUpdated = getUpdatedInt(negativeInvalidRes, vcCond, -1)
+          (computeMinimalValue(positiveUpdated), Some(computeMinimalValue(negativeUpdated)))
+        } else {
+          val intUpdated = getUpdatedInt(intInvalidRes, vcCond, sign)
+          (computeMinimalValue(intUpdated), None)
+        }
       }
     }
-    def computeBigMinimalValue() : BigInt = {
-       val bigInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[InfiniteIntegerLiteral]).map(x => (x._1, x._2.asInstanceOf[InfiniteIntegerLiteral].value))
-       if (bigInvalidRes.isEmpty) {
-         0
-       } else {
-         val bigInvalidResVal = bigInvalidRes.map(_._2)
-         val bigUpdated = getUpdatedBig(bigInvalidRes, vcCond)  
-         computeMinimalValue(bigUpdated)
+    def computeBigMinimalValue() : (BigInt, Option[BigInt]) = {
+      val bigInvalidRes = invalidResSeq.filter(x => x._2.isInstanceOf[InfiniteIntegerLiteral]).map(x => (x._1, x._2.asInstanceOf[InfiniteIntegerLiteral].value))
+      if (bigInvalidRes.isEmpty) {
+        (0, None)
+      } else {
+        val bigInvalidResVal = bigInvalidRes.map(_._2)
+        val sign = computeBigSign(bigInvalidResVal)
+        if (sign == 0) {
+          val positiveInvalidRes = bigInvalidRes.filter(_._2 >= 0)
+          val positiveUpdated = getUpdatedBig(positiveInvalidRes, vcCond, 1)
+          val negativeInvalidRes = bigInvalidRes.filter(_._2 < 0)
+          val negativeUpdated = getUpdatedBig(negativeInvalidRes, vcCond, -1)
+          (computeMinimalValue(positiveUpdated), Some(computeMinimalValue(negativeUpdated)))
+        } else {
+          val bigUpdated = getUpdatedBig(bigInvalidRes, vcCond, sign)
+          (computeMinimalValue(bigUpdated), None)
+        }
        }
-
     }
-    val intMinimalValue = computeIntMinimalValue()
-    val bigMinimalValue = computeBigMinimalValue()
+    val (intMinimalValue, intNegMinimalValue) = computeIntMinimalValue()
+    val (bigMinimalValue, bigNegMinimalValue) = computeBigMinimalValue()
     invalidRes.map(_ match {
-      case (id, v) if v.isInstanceOf[InfiniteIntegerLiteral] => (id, InfiniteIntegerLiteral(v.asInstanceOf[InfiniteIntegerLiteral].value - bigMinimalValue))
-      case (id, v) if v.isInstanceOf[IntLiteral] => (id, IntLiteral(v.asInstanceOf[IntLiteral].value - intMinimalValue))
+      case (id, v) if v.isInstanceOf[InfiniteIntegerLiteral] => {
+        val value = v.asInstanceOf[InfiniteIntegerLiteral].value
+        bigNegMinimalValue match {
+          case Some(neg) if (value < BigInt(0)) => (id, InfiniteIntegerLiteral(value - neg))
+          case _ => (id, InfiniteIntegerLiteral(value - bigMinimalValue))
+        }
+      }
+      case (id, v) if v.isInstanceOf[IntLiteral] => {
+        val value = v.asInstanceOf[IntLiteral].value
+        intNegMinimalValue match {
+          case Some(neg) if (value < 0) => (id, IntLiteral(value - neg))
+          case _ => (id, IntLiteral(value - intMinimalValue))
+        }
+      }
       case (id, v) => (id, v)
       })
   }
