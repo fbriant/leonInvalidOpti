@@ -78,7 +78,6 @@ object IntOpti {
       list.map(_._2)
     } else {
       val requirements = getRequirements(vcCond,sign)
-      print(requirements)
       list.map(x => {
         val filter = requirements.filter(y => y._1 == x._1 && ((y._2 < 0 && x._2 < 0) || (y._2 >= 0 && x._2 >= 0)))     
         if (filter.isEmpty) {
