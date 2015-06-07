@@ -6,3 +6,8 @@ Directory "SAVProject" contains all non-code submission for the SAV project, i.e
 
 - The slides I presented on the project presentation, which are outdated with my project's current version.
 - The project report which is up-to-date with the project's current version.
+
+Some remarks :
+
+- Binary search slows the procedure a bit and works only on global variables
+- Yet only Case Classes are being taken care of
