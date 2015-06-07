@@ -161,7 +161,7 @@ object AnalysisPhase extends LeonPhase[Program,VerificationReport] {
 
         case Some(true) => {
           val violatedPostCond = getViolatedPostCond(s.getModel, vcCond,vctx)
-          val (newObjRes, newVcCond) = getInvalidResultsOptimisation(vcCond,s)
+          val (newObjRes, newVcCond) = getInvalidResultsOptimisation(vcCond,s,vctx,violatedPostCond)
           if (!newObjRes.toSeq.zip(s.getModel.toSeq).filter(x => x._1._2 != x._2._2).isEmpty) { // If there were indeed an optimisation
             val newViolatedPostCond = getViolatedPostCond(newObjRes,newVcCond,vctx)
             if (violatedPostCond == newViolatedPostCond) { // If the newer model fails for the same reasons

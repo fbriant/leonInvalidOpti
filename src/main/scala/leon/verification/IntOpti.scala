@@ -12,6 +12,7 @@ import leon.purescala.Common._
 import leon.verification.VCKinds._
 import leon.evaluators._
 import scala.concurrent.duration._
+import leon.verification.PostCondDiag._
 
 import solvers._
 
@@ -172,6 +173,38 @@ object IntOpti {
       case (id, v) => (id, v)
       })
   }
+  
+  private def findIntMinimalValue(id: Identifier, min : Int,oldMin: Int, max: Int, oldMax: Int, oldValue: Int, oldoldValue: Int, listOtherArgs: List[(Identifier, Expr)], vcCond: Expr, vctx: VerificationContext) : Int = {
+    if (min + 1 == max || max == min || (min+max)/2 == oldValue || (min == oldMin && max == oldMax && oldValue == oldoldValue) || (min == -oldMin && min != 0) || (max == -oldMax && max != 0) || (oldValue == -oldoldValue && oldValue != 0)) {
+      oldValue
+    } else if (!validateOneCond(vcCond, ((id,IntLiteral((min+max)/2)) :: listOtherArgs).toMap, vctx)) {
+      findIntMinimalValue(id, min,min, (min+max)/2, max, (min+max)/2, oldValue, listOtherArgs,vcCond,vctx)
+    } else {
+      findIntMinimalValue(id, (min+max)/2, min, max, max, oldValue, oldValue, listOtherArgs,vcCond, vctx)
+    }
+  }
+  private def findBigMinimalValue(id: Identifier, min : BigInt, oldMin: BigInt, max: BigInt, oldMax: BigInt, oldValue : BigInt, oldoldValue: BigInt, listOtherArgs: List[(Identifier, Expr)], vcCond: Expr, vctx: VerificationContext) : BigInt = {
+    if (min + 1 == max || max == min || (min+max)/2 == oldValue || (min == oldMin && max == oldMax && oldValue == oldoldValue) || (min == -oldMin && min != 0) || (max == -oldMax && max != 0) || (oldValue == -oldoldValue && oldValue != 0)) {
+      oldValue
+    } else if (!validateOneCond(vcCond, ((id,InfiniteIntegerLiteral((min+max)/2)) :: listOtherArgs).toMap, vctx: VerificationContext)) {
+      findBigMinimalValue(id, min, min, (min+max)/2, max, (min+max)/2, oldValue, listOtherArgs,vcCond,vctx)
+    } else {
+      findBigMinimalValue(id, (min+max)/2, min, max, max, oldValue, oldValue, listOtherArgs,vcCond, vctx)
+    }
+  }
+  
+  private def computeBinarySearchIter(searchList: List[(Identifier, Expr)], updatedList: List[(Identifier, Expr)], vcCond: Expr, vctx: VerificationContext) : List[(Identifier, Expr)] = searchList match {
+    case (id,v) :: xs if v.isInstanceOf[IntLiteral] => computeBinarySearchIter(xs, (id, IntLiteral(findIntMinimalValue(id, 0,0, v.asInstanceOf[IntLiteral].value,0, v.asInstanceOf[IntLiteral].value,0,xs ::: updatedList, vcCond,vctx))) :: updatedList,vcCond,vctx)
+    case (id,v) :: xs if v.isInstanceOf[InfiniteIntegerLiteral] => computeBinarySearchIter(xs, (id, InfiniteIntegerLiteral(findBigMinimalValue(id, 0, 0, v.asInstanceOf[InfiniteIntegerLiteral].value, 0, v.asInstanceOf[InfiniteIntegerLiteral].value, 0,xs ::: updatedList, vcCond,vctx))) :: updatedList,vcCond,vctx)
+    case (id,v) :: xs => computeBinarySearchIter(xs, (id,v) :: updatedList, vcCond, vctx)
+    case Nil => updatedList
+  }
+  
+  def computeBinarySearchInvalidRes(invalidRes: Map[Identifier, Expr], vcCond: Expr, vctx: VerificationContext) : Map[Identifier,Expr] = {
+    computeBinarySearchIter(invalidRes.toList, Nil, vcCond, vctx).toMap
+  }
+  
+  
   /**
    * Computes new invalid results with local minimal value substraction inside a CaseClass.
    */
@@ -221,8 +254,34 @@ object IntOpti {
     case _ => Implies(And(newInvalidRes.toSeq.map(x => Equals(Variable(x._1),x._2))),oldVcCond)
   }
   
-  def getInvalidResultsOptimisation(vcCond: Expr, s: Solver) : (Map[Identifier,Expr],Expr) = {
-    val newIntRes = computeNewInvalidRes(s.getModel,vcCond)
+  def getInvalidResultsOptimisation(vcCond: Expr, s: Solver, vctx: VerificationContext, vConds: List[Expr]) : (Map[Identifier,Expr],Expr) = {
+    def getBetterModel(model1: Map[Identifier, Expr], model2: Map[Identifier, Expr]) : Map[Identifier,Expr] = {
+      def modelUnfold(model: Map[Identifier, Expr]) : BigInt = {
+        model.map(_ match {
+          case (id, IntLiteral(i)) => (id, InfiniteIntegerLiteral(i))
+          case (id, v) => (id, v)
+        }).filter(_._2.isInstanceOf[InfiniteIntegerLiteral]).map(_._2.asInstanceOf[InfiniteIntegerLiteral].value).reduceLeft((x,y) => x.abs + y.abs)
+      }
+      val newViolatedPostCond1 = getViolatedPostCond(model1,getNewVcCond(model1,vcCond),vctx)
+      val newViolatedPostCond2 = getViolatedPostCond(model2,getNewVcCond(model2,vcCond),vctx)
+      if(modelUnfold(model1) > modelUnfold(model2)) {
+        if (newViolatedPostCond2 == vConds) {
+          model2
+        } else {
+          model1
+        }
+      } else {
+        if (newViolatedPostCond1 == vConds) {
+          model1
+        } else {
+          model2
+        }
+      }
+
+    }
+    val newIntResMVS = computeNewInvalidRes(s.getModel,vcCond)
+    val newIntResBS = computeBinarySearchInvalidRes(s.getModel, vcCond, vctx)
+    val newIntRes = getBetterModel(newIntResMVS, newIntResBS)
     val newObjRes = computeNewObjectInvalidRes(newIntRes)
     (newObjRes, getNewVcCond(newObjRes,vcCond))
   }
